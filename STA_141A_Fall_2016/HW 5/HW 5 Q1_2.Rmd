@@ -1,0 +1,204 @@
+---
+title: "STA 141 HW 5"
+author: "Jiewei Chen (999 494 235)"
+date: "11/28/2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1.
+
+## Function for (i) - (iii)
+
+The function **Create.Data** uses **s** as input, which is a number used to set the random seed every time we run this funciton. In the function, it generates **X's**, **Y's** as described in the question 1(i). And this function will return a matrix with column representing **X's**, **$\epsilon$**, **Y's**.
+
+The function **Cal.beta** uses **X** and **Y** as inputs, it fits the least squares regression line to the data and outputs the estimate of (**$\beta_{0}$**, **$\beta_{1}$**, **$\sigma^{2}$**). 
+
+The function **Resampling** uses **data** as inputs, it resamples the residuals of a model and then create a new dataset by using these resampled residuals. Then it computes the two coefficients of the new model. The output of this function is the two coefficients calculated from the resampled dataset.
+
+The function **step1to3** just concatenates Question (i) to (iii) together to get the estimate of (**$\beta_{0}$**, **$\beta_{1}$**, **$\sigma^{2}$**), and confidence intervals of two coefficients.
+
+```{r function, echo = T, message=F, warning=F }
+
+step1to3 = function (i) {
+        library(tidyverse)
+        library(readr)
+        library(broom)
+
+        Create.Data = function (s) {
+                # s  is the seed
+                # Generate Chi-squared distribution
+                set.seed(s)
+                X = rchisq(100, 6, ncp = 0)
+                # Generate Normail distribution
+                set.seed(s)
+                epsilon = rnorm(100, mean = 0, sd = 1)
+                
+                Y = -5 + 2*X + epsilon
+                
+                result = as_data_frame(cbind(X, Y))
+                return(result)
+        }
+        
+        result_1 = Create.Data(i)
+        
+        Cal.beta = function(X,Y) {
+                model1 = lm(Y ~ X)
+                SSE = sum(model1$residuals^2)
+                n = length(X)
+                MSE = SSE/(n-2)
+                return(c(coef(model1), MSE))
+        }
+        
+        result_2 = Cal.beta(result_1$X, result_1$Y)
+        
+        # Residual bootstrap (resample residuals)
+        resid = augment(lm(Y~X, result_1))
+        
+        Resampling = function(data) {
+                n = nrow(data)
+                # Sample row numbers (i) rather than values (e_i)
+                idx = sample(n, n, replace = TRUE)
+                
+                # Use row numbers to get new residuals (e2_i).
+                res_samp = data$.resid[idx]
+                
+                # y2_i =  b_0 + b_1 * x_i    + e2_i
+                y_samp =  data$.fitted + res_samp
+                
+                # Insert new response (y_i) into data frame, keeping old covariates (x_i)
+                data$Y = y_samp
+                
+                # Fit the same model with new data (y2_i, x_i).
+                new_mod = lm(Y ~ X, data)
+                
+                return (coef(new_mod))
+        }
+        
+        # Bootstrap 400 times.
+        boot = replicate(400, Resampling(resid))
+        
+        # Now compute statistics on the bootstrap samples. Each column is one bootstrap
+        # sample and each row is one statistic.
+        #
+        # For 95% confidence intervals:
+        
+        ci_beta0 = quantile(boot[1, ], c(0.025, 0.975))
+        ci_beta1 = quantile(boot[2, ], c(0.025, 0.975))
+        
+        # theoretical confidence intervals
+        ci_beta0_theo = confint(lm(Y~X, result_1), level = 0.95)[1,]
+        ci_beta1_theo = confint(lm(Y~X, result_1), level = 0.95)[2,]
+        
+        result = list("est.beta0" = result_2[1], "est.beta1" = result_2[2],
+                      "est.sigma2" = result_2[3],
+                      "CI.beta0" = ci_beta0, "CI.beta1" = ci_beta1, 
+                      "CI.beta0.theo" = ci_beta0_theo, "CI.beta1.theo" = ci_beta1_theo)
+        
+        return(result)
+}
+
+result.1 = step1to3(1)
+
+```
+
+
+
+## (ii) 
+
+So the estimation of **$\beta_{0}$**, **$\beta_{1}$**, **$\sigma^{2}$** are
+
+**Estimation of** |  **Value**  
+--------------------|-----------------
+$\hat{\beta_{0}}$|`r result.1[["est.beta0"]]`
+$\hat{\beta_{1}}$|`r result.1[["est.beta1"]]`
+$\hat{\sigma^{2}}$|`r result.1[["est.sigma2"]]`
+
+## (iii)
+
+So the resampling-based 95% confidence intervals for $\beta_{0}$ and $\beta_{1}$ by using a parametric (i.e., residual-base) bootstrap procedure with 400 bootstrap replicates are
+
+Coefficient | 95% Confidence Interval
+------------------------|--------
+$\beta_{0}$ | [`r result.1[["CI.beta0"]][1]`, `r result.1[["CI.beta0"]][2]`]
+$\beta_{1}$ | [`r result.1[["CI.beta1"]][1]`, `r result.1[["CI.beta1"]][2]`] 
+
+
+## (iv)
+
+```{r 1 (iv), echo = T, message=F, warning=F, fig.width=6, fig.height=9}
+# Do step (i) to (iii) three times
+result.10 = lapply(1:10, step1to3)
+
+# Tabulate the confidence intervals and length of Beta0 from Bootstrap
+CI.beta0.10 = as_data_frame(t(sapply(1:10, function(i) { 
+        cbind(result.10[[i]]$CI.beta0) } )))
+colnames(CI.beta0.10) = c("Lower.Bound", "Higher.Bound")
+CI.beta0.10$length = CI.beta0.10$Higher.Bound - CI.beta0.10$Lower.Bound
+
+# Tabulate the theoretical confidence intervals and length of Beta0
+CI.beta0.10.theo = as_data_frame(t(sapply(1:10, function(i) { 
+        cbind(result.10[[i]]$CI.beta0.theo) } )))
+colnames(CI.beta0.10.theo) = c("Lower.Bound", "Higher.Bound")
+CI.beta0.10.theo$length = CI.beta0.10.theo$Higher.Bound - CI.beta0.10.theo$Lower.Bound
+
+# Tabulate the confidence intervals and length of Beta1 from Bootstrap
+CI.beta1.10 = as_data_frame(t(sapply(1:10, function(i) { 
+        cbind(result.10[[i]]$CI.beta1) } )))
+colnames(CI.beta1.10) = c("Lower.Bound", "Higher.Bound")
+CI.beta1.10$length = CI.beta1.10$Higher.Bound - CI.beta1.10$Lower.Bound
+
+# Tabulate the theoretical confidence intervals and length of Beta1
+CI.beta1.10.theo = as_data_frame(t(sapply(1:10, function(i) { 
+        cbind(result.10[[i]]$CI.beta1.theo) } )))
+colnames(CI.beta1.10.theo) = c("Lower.Bound", "Higher.Bound")
+CI.beta1.10.theo$length = CI.beta1.10.theo$Higher.Bound - CI.beta1.10.theo$Lower.Bound
+```
+
+\pagebreak
+
+**The theoretic CI for $\beta_{0}$ is **
+
+```{r 1 (iv)1, echo = F, message=F, warning=F, fig.width=6, fig.height=9}
+CI.beta0.10.theo
+```
+
+**The CI computed from Bootstrap for $\beta_{0}$ is **
+
+```{r 1 (iv)2, echo = F, message=F, warning=F, fig.width=6, fig.height=9}
+CI.beta0.10
+```
+
+\pagebreak
+
+**The theoretic CI for $\beta_{1}$ is **
+
+```{r 1 (iv)3, echo = F, message=F, warning=F, fig.width=6, fig.height=9}
+CI.beta1.10.theo
+```
+
+**The CI computed from Bootstrap for $\beta_{1}$ is **
+
+```{r 1 (iv)4, echo = F, message=F, warning=F, fig.width=6, fig.height=9}
+CI.beta1.10
+```
+
+
+```{r 1 (iv)5, echo = T, message=F, warning=F, fig.width=6, fig.height=9}
+len.beta0.theo = mean(CI.beta0.10.theo$length)
+len.beta0 = mean(CI.beta0.10$length)
+len.beta1.theo = mean(CI.beta1.10.theo$length)
+len.beta1 = mean(CI.beta1.10$length)
+```
+
+The average lengths of the bootstrap confidence intervals and that of corresponding theoretical confidence intervals are listed below
+
+Coefficient | Length of CI from Bootstrap | Length of CI from Theoretics
+------------|-----------------------------|-----------------------------
+$\beta_{0}$| `r len.beta0` | `r len.beta0.theo`
+$\beta_{1}$| `r len.beta1` | `r len.beta1.theo`
+
+

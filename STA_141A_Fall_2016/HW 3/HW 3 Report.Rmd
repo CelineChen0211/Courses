@@ -1,0 +1,287 @@
+---
+title: "STA 141 HW 3"
+author: "Jiewei Chen (999 494 235)"
+date: "November 12, 2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+*The codes and results derived by using these codes constitute my own work. I have consulted the following resources regarding this assignment: Da Xue, Lingjun Ma.*
+
+```{r Function geocode_uc(), echo = FALSE, message = FALSE, warning  = FALSE}
+geocode_uc = function(file, cache = "geocode.uc.rds") {
+        # cache is a good tool that help you save time and memory space
+        if ( (file.exists(cache)) ) {
+                # we have the info already, load from disk.
+                result = readRDS(cache)
+        }
+        else {
+                # if we don't have the info, get geocoding info from Google Maps
+                # Need to get lat/lon coordinates for each campus
+                # use geocode()
+                result = geocode(file)
+                
+                saveRDS(result, cache) 
+        }
+        
+        return(result)
+}
+```
+
+```{r Function get_map_ca(), echo = FALSE, message = FALSE, warning  = FALSE}
+get_map_ca = function(name_ca, cache = "get_map_ca.rds") {
+        # cache is a good tool that help you save time and memory space
+        if ( (file.exists(cache)) ) {
+                # we have the info already, load from disk.
+                result = readRDS(cache)
+        }
+        else {
+                # if we don't have the info, get geocoding info from Google Maps
+                # Need to get lat/lon coordinates for each campus
+                # use get_map()
+                result = get_map(name_ca, zoom = 6, maptype="satellite")
+                
+                saveRDS(result, cache) 
+        }
+        
+        return(result)
+}
+```
+
+```{r load packages, echo = FALSE, warning = FALSE, message = FALSE}
+library(tidyverse)
+library(plyr)
+library(ggmap)
+library(ggplot2)
+library(maptools)
+library(sp)
+library(gmapsdistance)
+library(igraph)
+```
+
+```{r load data, echo = FALSE, warning = FALSE, message = FALSE}
+# Set working directory
+setwd("~/Dropbox/Course Fall 2016/STA 141/HW 3")
+# Load Data Set
+#       Note that the names of campuses contain space, 
+#               so we can not simply use read.table to get the data.
+#       The data has fixed-width columns, so maybe try read.fwf()
+#       But we don't know the width now
+#       Tidyverse ususally makes things easier
+widths = fwf_empty("UC_US_News_ranking_2017_2.txt") # return the location of each space
+# Get the correct name for each University
+widths$begin = widths$begin[-2]
+widths$end = widths$end[-1]
+# set colomn names
+widths$col_names = c("Campus", "Rank", "Enrollment",  "Accepted")
+
+my_data = read_fwf("UC_US_News_ranking_2017_2.txt", widths)
+```
+
+
+# Problem 1
+
+```{r Loc of Each University, echo = FALSE, message = FALSE, warning  = FALSE}
+# Note that if simply use "UC X" as name, function geocode() may not work sometimes.
+# Turns out that "UC X, California, USA" can work for all, except for UC Davis.
+my_data$Campus = paste0(my_data$Campus, ", California, USA")
+# Change the name of UC Davis
+my_data$Campus[5] = "University of California Davis"
+# This column of abbreviations are added for later lable of each university
+my_data$short = c("UCB", "UCLA", "UCSB", "UCI", "UCD", "UCSD", "UCSC", "UCR", "UCM")
+my_data[, c("Lon", "Lat")] = geocode_uc(my_data$Campus) # See Appendix for details of geocode_uc()
+```
+
+```{r Satellite Map of CA with borders, echo = FALSE, message = FALSE, warning  = FALSE}
+CA = get_map_ca("california")
+
+# load state boarder
+shape = readShapeSpatial("tl_2016_us_state")
+# turn into data.frame
+shape = fortify(shape)
+# add boarder of California
+California=subset(shape,shape$id=="13")
+CA_Boarders = ggmap(CA, darken  = 0.3) + # darken is used here to give better contract
+        geom_polygon(aes(long, lat, group = group), data = California, color = "slategray1", size=0.5, fill = NA)
+
+# Another way to add boarder. However, there will be some boarder missing from this borders() function
+#CA_Boarders = ggmap(CA, darken  = 0.3) + # darken is used here to give better contract
+#        borders("state", size=0.5, col="slategray1", regions = "california")
+```
+
+
+```{r Add location of each UC campus, echo = FALSE, message = FALSE, warning  = FALSE}
+CA_UC = CA_Boarders + 
+        # Add each campus
+        geom_point(data = my_data, aes(x = Lon, y = Lat), color = "orangered", size = 4) +
+        # labels are above the campus location
+        geom_text(mapping = aes(x = Lon, y = Lat + 0.3, label = short),
+                  data = my_data, size = 4, angle = 30, color = "slategray1")
+```
+
+## 1(i) A Satellite Map of CA with State Boundary and Each Univeristy
+
+```{r 1(i), echo = FALSE, message = FALSE, warning  = FALSE, fig.width = 6, fig.height = 6}
+# Answer for 1(i)
+CA_UC + labs(title = "A Satellite Map of CA with \n State Boundary and Each Univeristy")
+```
+
+\pagebreak
+
+## 1(ii) More Information of Each Campus
+
+In the map below, the relative rank (among the 9 UC campuses), student population size and acceptance rate are presented.
+
+1. "Size of the Circle" represents the number of undergrads enrolled. The larger the size, the higher the number of undergrads enrolled.
+
+2. "Inner Color" of the point corresponds to the rank of this campus within UC. Red means higher ranking, while yellow means lower ranking.
+
+3. The "Inner Color" is telling us the percentage of acceptance in 2015. The lighter the border is, the lower the percentage of students accepeted in Fall 2015 is.
+
+
+```{r more information, echo = FALSE, message = FALSE, warning  = FALSE, fig.width = 10, fig.height = 8, fig.align="center"}
+my_data$rank_in_UC = order(my_data$Rank)
+CA_UC_2 = CA_Boarders + 
+        geom_point(data = my_data, aes(x = Lon, y = Lat, # Add each campus
+                                        size = Enrollment, color = Accepted/20, 
+                                        fill = rank_in_UC), 
+                   pch = 21, stroke = 3) + 
+        scale_fill_gradient(low = "red",high = "yellow", breaks=c(2,5,8)) + 
+        scale_color_gradient(low = "springgreen",high = "springgreen4") +
+        scale_size(range=c(1,5)) + 
+        # labels are above the campus location
+        geom_text(mapping = aes(x = Lon, y = Lat + 0.3, label = short),
+                  data = my_data, size = 3, angle = 30, color = "white")
+# Answer of 1.(ii)
+CA_UC_2 + labs(title = "A Satellite Map with Information of Each Univeristy")
+```
+
+\pagebreak
+
+## 1.(iii) Find Bicycle Route b/t Each Pair of Campus
+
+Map with bicycle routes connecting every pair of campuses
+
+```{r Find Bicycle Route b/t Each Pair of Campus, echo = FALSE, message = FALSE, warning  = FALSE,  fig.width = 10, fig.height = 8, fig.align="center"}
+
+# Get paths b/t campus
+# Find unique pairs among all nine campus
+combns = combn(my_data$Campus, 2) # each coln represents a pair and each pair is unique
+# mapply - mapply is a multivariate version of sapply
+path = mapply(function(from, to) {
+        # get the bike paths
+        # set structure to route to use with geom_path() later
+        path = route(from, to, mode = "bicycling", structure = "route")
+        
+        # Modify to keep track of origin and destination 
+        # Form groups
+        path$tofrom = paste0(from," - ", to)
+        
+        return(path) # now the result is a list
+        # each component of the list is a data.frame
+        
+}, combns[1, ], combns[2, ], SIMPLIFY = FALSE)
+
+# Use rbind() to bind all data.frame together
+# do call() lets you call a function with a specified list of arguments
+paths = do.call(rbind, path)
+paths$tofrom = factor(paths$tofrom)
+
+plt_bike_path = CA_UC_2 + geom_path(aes(lon, lat, group = paths$tofrom), paths, color = "hotpink") 
+
+plt_bike_path + labs(title = "A Satellite Map with Bike Path among Campus")
+```
+
+\pagebreak
+
+# Problem 2
+
+## 2 (i) Compute the Driving Distance among Campus
+
+Driving distance between each pair of campuses. Column one is the driving distance in miles, Column two is the name of origin campus, and Column three is the name of desination campus.
+
+```{r Compute the Driving Distance, echo = FALSE, message = FALSE, warning  = FALSE}
+# Get paths b/t campus
+# Find unique pairs among all nine campus
+# format the location by using the lat and lon in Google Maps
+# lat first, and lon second.
+
+latlon = paste0(my_data$Lat, ", ", my_data$Lon)
+combns_2 = combn(latlon, 2) # each coln represents a pair
+
+# mapply - mapply is a multivariate version of sapply
+dis_driving = mapply(function(origin, destination) {
+        # get the distance between each pair of campus
+        rlt = mapdist(origin, destination, mode = "driving", output = "simple")$miles
+
+        rlt$ori = my_data$short[latlon == origin]
+        rlt$des = my_data$short[latlon == destination]
+        
+        return(rlt) # now the result is a list
+        # each component of the list is a data.frame
+        
+}, combns_2[1, ], combns_2[2, ], SIMPLIFY = FALSE)
+
+Dis_drive = do.call(rbind, dis_driving)
+Dis_drive = as.data.frame(Dis_drive)
+rownames(Dis_drive) = c(1:36)
+colnames(Dis_drive)[1] = "Driving Distance (miles)"
+Dis_drive[,1:3]
+```
+
+\pagebreak
+
+## 2 (ii) Check if Each Pair of Campus is Neighbor
+
+Only campuses where the distance between them are less than 100 miles are listed below. And these campus pair are called neighbors.
+
+```{r Check if Each Pair of Campus is Neighbor 1, echo = FALSE, message = FALSE, warning  = FALSE, fig.width = 6, fig.height = 6, fig.align="center"}
+# find the neighbor campus, the distance between which is less than 100 miles
+neighbor = Dis_drive[Dis_drive[1] < 100, ]
+rownames(neighbor) = c(1:8)
+colnames(neighbor)[1] = "Driving Distance (miles)"
+neighbor[,1:3]
+```
+
+\pagebreak
+
+## 2 (iii) Link Neighbor Campus
+
+Below is a node and edge plot of UC campuses. Each node represent a campus. Two campuses are linked with a edge if they are neighbor campus.
+
+```{r Check if Each Pair of Campus is Neighbor 2, echo = FALSE, message = FALSE, warning  = FALSE, fig.width = 6, fig.height = 6, fig.align="center"}
+plt_2 = graph_from_data_frame(neighbor[,2:3], directed = FALSE)
+# Check if there is any campus not on the Edge and Node Plot
+Campus_no_neighbor = setdiff(my_data$short, names(plt_2[1]))
+# Add UC Merced onto the plot, although it doesn't have any neighbor
+#       it will be plotted as an isolated vertice
+plt_2 = plt_2 + vertices(Campus_no_neighbor)
+plot(plt_2, main = "Edge Plot of Neighboring UC Campus")
+```
+
+\pagebreak
+
+## 2 (iv) Depict Campus Students Enrollment
+
+This plot shows the neighboring campus within UC system, as well as the student population. If the student population is larger than 20000, the node on the plot is orange. Otherwise, the color of the node is blue.
+
+```{r Students Enrollment, echo = FALSE, message = FALSE, warning  = FALSE, fig.width = 6, fig.height = 6, fig.align="center"}
+# Find out which campus has student less than 200000, and which has more than 20000
+my_data$Stt.Enroll = cut(my_data$Enrollment, c(0,20000,30000), 
+                         labels = c("less than 20,000", "greater than 20,000"))
+# Add UC Merced onto the plot, although it doesn't have any neighbor
+#       it will be plotted as an isolated vertice
+plt_3 = plt_2
+
+plt_3$name = c("UCB", "UCLA", "UCI", "UCSD", "UCD", "UCSC", "UCSB", "UCR", "UCM")
+V(plt_3)$color = ifelse(plt_3$name %in% my_data$short[my_data$Stt.Enroll == "less than 20,000"], "royalblue1", "orange")
+plot(plt_3, main = "Edge Plot of Neighbor UC Campus \n with Student Population")
+legend('topright',legend=c("population < 20,000", "population >= 20,000"), fill = c("royalblue1", "orange"),col='black', bty='n')
+```
+
+
+
+
